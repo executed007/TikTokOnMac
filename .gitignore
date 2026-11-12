@@ -1,0 +1,10 @@
+# Build output
+build/
+
+# Never commit apps or archives: they belong to their developers
+*.ipa
+*.app
+!App/
+
+# macOS
+.DS_Store
