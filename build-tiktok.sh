@@ -4,8 +4,12 @@
 #   ./build-tiktok.sh /path/to/TikTok.ipa [Applications folder]
 #
 # The app lands in /Applications (or the folder you pass) as TikTok.app. Your TikTok data
-# lives in ~/Library/Containers/com.zhiliaoapp.musically and is kept across rebuilds, so
-# running this again with a newer .ipa updates the app without logging you out.
+# lives in ~/Library/Containers/com.zhiliaoapp.musically, so running this again with a newer
+# .ipa updates the app and you carry on where you left off.
+#
+# Works from a source checkout (builds Catalyst Runner first, needs the Xcode Command Line
+# Tools) or from the TikTokOnMac Builder release (uses the catalyst-runner tool shipped
+# next to this script, no developer tools needed).
 set -eu
 cd "$(dirname "$0")"
 
@@ -20,8 +24,16 @@ if [ "$(uname -m)" != arm64 ]; then
     exit 1
 fi
 
-echo "== Building Catalyst Runner"
-./build.sh > build/build.log 2>&1 || { cat build/build.log; exit 1; }
+if [ -x ./catalyst-runner ] && [ -f ./RunnerShim.dylib ]; then
+    # Release download: clear the "downloaded from the internet" flag so macOS runs the tool.
+    xattr -d com.apple.quarantine ./catalyst-runner ./RunnerShim.dylib 2>/dev/null || true
+    RUNNER=./catalyst-runner
+else
+    echo "== Building Catalyst Runner"
+    mkdir -p build
+    ./build.sh > build/build.log 2>&1 || { cat build/build.log; exit 1; }
+    RUNNER=./build/catalyst-runner
+fi
 
 # Check the archive before doing any work: it must be TikTok, and it must be decrypted.
 WORK="$(mktemp -d)"
@@ -32,7 +44,7 @@ ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")"
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO")"
 if [ "$ID" != com.zhiliaoapp.musically ]; then
-    echo "This is $ID, not TikTok (com.zhiliaoapp.musically). For other apps use build/catalyst-runner install." >&2
+    echo "This is $ID, not TikTok (com.zhiliaoapp.musically). For other apps, use Catalyst Runner." >&2
     exit 1
 fi
 echo "== Found TikTok $VERSION ($BUILD)"
@@ -51,6 +63,7 @@ if [ ! -f "$SETTINGS" ]; then
   <key>lockCameraOrientation</key><true/>
   <key>cropCameraToPortrait</key><true/>
   <key>volume</key><real>1</real>
+  <key>showVolumeButton</key><true/>
   <key>sandbox</key><true/>
 </dict></plist>
 EOF
@@ -64,8 +77,8 @@ if pgrep -f 'TikTok\.app/TikTok$' > /dev/null; then
     pkill -KILL -f 'TikTok\.app/TikTok$' 2>/dev/null || true
 fi
 echo "== Converting (this takes a minute)"
-./build/catalyst-runner install "$IPA" | grep -v '^Converting MachO' || exit 1
-./build/catalyst-runner export "$ID" --to "$DEST"
+"$RUNNER" install "$IPA" | grep -v '^Converting MachO' || exit 1
+"$RUNNER" export "$ID" --to "$DEST"
 echo
 echo "Done. Open TikTok from $DEST, Launchpad or Spotlight."
-echo "The first launch asks for camera and microphone access when you record."
+echo "TikTok asks for camera and microphone access the first time you record."
